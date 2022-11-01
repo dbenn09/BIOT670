@@ -1,0 +1,347 @@
+## BIOT 670I Project 3 Step 1: Cleaning the data set
+
+##Take care of all of the initial data cleaning 
+install.packages("pscl")
+install.packages("pROC")
+install.packages("dplyr", type = "binary")
+install.packages("stringr")
+install.packages("caTools")
+install.packages("broom")
+install.packages("e1071", type = "binary")
+install.packages("kernlab", type = "binary")
+install.packages("randomForest", type = "binary")
+install.packages("ggplot2")
+install.packages("ggfortify")
+
+library(ggfortify)
+library(caret)
+library(pscl)
+library(pROC)
+library(dplyr)
+library(stringr)
+library(caTools)
+library(broom)
+library(e1071)
+library(kernlab)
+library(randomForest)
+library(factoextra)
+
+
+## Create variable called "project3", which reads the hospital record .csv file:
+project3 <- read.csv('~/Project 3 Dataset.csv')
+
+
+## View information about the table, attributes and values
+str(project3)
+
+## Remove duplicate ID_Patient_Care_Situation records if any
+project3<- project3[!duplicated(project3$ID_Patient_Care_Situation), ]
+
+## Remove records that seem to have irregular data 
+## (all connected to people with ages over 100)
+project3 <- project3[-c(which(project3$Patient_Age > 100 | project3$Patient_Age < 0)), ]
+
+## Identify and Remove Records where variables for A-F are missing 
+#3(Remove # when in use)
+
+## A. Check before
+sum (is.na(project3))
+apply(project3, 2, function(col)sum(is.na(col))/length(col))
+
+## B. Removal
+project3 <- project3[-c(which(is.na(project3$A))), ]
+
+## C. Check after to confirm
+sum (is.na(project3))
+apply(project3, 2, function(col)sum(is.na(col))/length(col))
+
+## Remove columns that show no variance in any record or represent ID information
+## All records in Z marked as"0" and all records in Patient_mental_condition marked "Stable"
+project3 <-within(project3, rm(ID_Patient_Care_Situation, Patient_ID,Z, Patient_mental_condition))
+
+## Alter the Patient_Rural_Urban attribute to numerical representations for analysis
+## Rural = "1", Urban = "0" (Remove # when in use)
+project3$Patient_Rural_Urban <- gsub("RURAL", "1", project3$Patient_Rural_Urban)
+project3$Patient_Rural_Urban <- gsub("URBAN", "0", project3$Patient_Rural_Urban)
+
+## Alter the Patient_Smoker attribute to numerical representations for analysis
+## YES = "1", NO = "0" (Remove # when in use)
+project3$Patient_Smoker <- gsub("YES", "1", project3$Patient_Smoker)
+project3$Patient_Smoker <- gsub("NO", "0", project3$Patient_Smoker)
+
+## Split the Treated_with_drugs into 6 attributes, for DX1-DX6
+#project3$Treated_DX1 <- ifelse(grepl("DX1", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX1 <- ifelse(grepl("DX1", project3$Treated_with_drugs), "1", "0")
+#project3$Treated_DX2 <- ifelse(grepl("DX2", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX2 <- ifelse(grepl("DX2", project3$Treated_with_drugs), "1", "0")
+#project3$Treated_DX3 <- ifelse(grepl("DX3", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX3 <- ifelse(grepl("DX3", project3$Treated_with_drugs), "1", "0")
+#project3$Treated_DX4 <- ifelse(grepl("DX4", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX4 <- ifelse(grepl("DX4", project3$Treated_with_drugs), "1", "0")
+#project3$Treated_DX5 <- ifelse(grepl("DX5", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX5 <- ifelse(grepl("DX5", project3$Treated_with_drugs), "1", "0")
+#project3$Treated_DX6 <- ifelse(grepl("DX6", project3$Treated_with_drugs), "YES", "NO")
+project3$Treated_DX6 <- ifelse(grepl("DX6", project3$Treated_with_drugs), "1", "0")
+
+## Move the different treatment attributes next to Treated_with_Drugs
+project3 <- project3 %>% relocate(Treated_DX1:Treated_DX6, .before = Patient_Age)
+
+## Remove Identification columns and the Treated_with_drugs column
+## (Remove # when in use)
+project3 <-within(project3, rm(Treated_with_drugs))
+
+
+
+## PART 2. LINEAR REGRESSION MLM
+
+numeric_project <- as.data.frame(apply(project3, 2, as.numeric))
+
+## Indexing for training and test data
+glm_index <- sample(1:nrow(numeric_project), round(0.75*nrow(numeric_project)))
+train_glm <- numeric_project[glm_index,]
+test_glm <- numeric_project[-glm_index,]
+
+
+## All variables fit, MSE= 0.177, pseudoR^2=0.194, AUROC= 0.685
+## train
+fit_model <- glm(Survived_1_year~ . , data= train_glm, family = "binomial")
+
+## Model for AUC calculations
+fit_model_project <- glm(Survived_1_year ~ . , data = project3, family = "binomial")
+varImp(fit_model)
+
+## Test
+pr.glm <- predict(fit_model, test_glm, type="response")
+## MSE calc
+MSE.glm <- sum((pr.glm - test_glm$Survived_1_year)^2)/ nrow(test_glm)
+MSE.glm
+## PR2 calcs
+glm_perf <- glance(fit_model)
+(pseudoR2_glm <- 1- glm_perf$deviance/glm_perf$null.deviance)
+## AUC calc
+project3$all_prob <- predict(fit_model_project, type= "response")
+project3$all_pred <- ifelse(project3$all_prob> 0.51, 1, 0)
+ROC_all <- roc(project3$Survived_1_year, project3$all_pred)
+plot(ROC_all, col="red", main="ROC All Variable Model")
+legend("right", legend="AUROC: .685", col=c("red"), lty=1:2)
+(auc(ROC_all))
+
+## Removing prob and pred columns before step models used
+project3 <- within(project3, rm(all_pred,all_prob))
+
+## Forward stepwise fit, MSE= 0.18, pseudoR^2=.197, AUROC= 0.693
+#variables= DX6, Smoker, Rural vs Urban, BMI, D, DX5, A, B, C, DX1, DX2
+
+## Null model for stepwise
+null_model <- glm(Survived_1_year ~ 1 , data= train_glm, family = "binomial")
+null_model_project <- glm(Survived_1_year ~ 1 , data= project3, family = "binomial")
+
+## Specify the full model using all the potential predictors
+full_model <- glm(Survived_1_year ~ . , data= train_glm, family = "binomial")
+full_model_project <- glm(Survived_1_year ~ . , data= project3, family = "binomial")
+
+## Forward stepwise with trained data
+forward_step_model <- step(null_model, scope= list(lower= null_model, upper= full_model), direction="forward")
+
+## Model for 
+forward_step_model_project <- step(null_model_project, scope= list(lower= null_model_project, upper= full_model_project), direction="forward")
+
+## Forward MSE and PR^2 calcs
+forward_pr.glm <- predict(forward_step_model, test_glm, type="response")
+MSE_forward.glm <- sum((forward_pr.glm - test_glm$Survived_1_year)^2)/ nrow(test_glm)
+MSE_forward.glm
+forward_perf <- glance(forward_step_model)
+(pseudoR2_forward <- 1- forward_perf$deviance/forward_perf$null.deviance)
+
+## Auc Calc
+project3$forward_prob <- predict(forward_step_model_project, project3, type= "response")
+project3$forward_pred <- ifelse(project3$forward_prob> 0.504, 1, 0)
+ROC_forward <- roc(project3$Survived_1_year, project3$forward_pred)
+plot(ROC_forward, col="blue", main="ROC Forward Stepwise Regression")
+legend("right", legend="AUROC: .693", col=c("blue"), lty=1:2)
+(auc(ROC_forward))
+
+## Removing prob and pred columns before step models used
+project3 <- within(project3, rm(forward_pred, forward_prob))
+
+## Backward stepwise fit, MSE = 0.18, pseudoR^2 =0.198, AUROC= 0.691
+#variables DX1, DX2, DX3, DX4, DX5, DX6, Age, BMI, SMoker, Rural vs Urban, A, B, C, D
+
+## Backward stepwise with trained data
+backward_step_model <- step(full_model, direction="backward", scope= list(lower=null_model, upper=full_model))
+
+## Model for AUC calculations
+backward_step_model_project <- step(full_model_project, direction="backward", scope= list(lower=null_model_project, upper=full_model_project))
+
+## MSE and pseudoR^2 calcs
+backward_pr.glm <- predict(backward_step_model, test_glm, type= "response")
+(MSE_backward.glm <- sum((backward_pr.glm - test_glm$Survived_1_year)^2)/ nrow(test_glm))
+backward_perf <- glance(backward_step_model)
+(pseudoR2_backward <- 1- backward_perf$deviance/backward_perf$null.deviance)
+
+## Auc calcs
+project3$backward_prob <- predict(backward_step_model_project, project3, type= "response")
+project3$backward_pred <- ifelse(project3$backward_prob> 0.504, 1, 0)
+ROC_backward <- roc(project3$Survived_1_year, project3$backward_pred)
+plot(ROC_backward, col="green", main="ROC Backward Stepwise Regression")
+legend("right", legend="AUROC: .691", col=c("green"), lty=1:2)
+(auc(ROC_backward))
+
+## Removing prob and pred columns before step models used
+project3 <- within(project3, rm(backward_prob, backward_pred))
+
+
+
+## PART 3. RANDOM FOREST MLM
+
+
+## Convert the Survived_1_year column from  1/0 to Yes/No
+project3$Survived_1_year <- gsub("1", "Yes", project3$Survived_1_year)
+project3$Survived_1_year <- gsub("0", "No", project3$Survived_1_year)
+
+## Select columns for analysis
+project3 <- project3[,c(1:19)]
+
+## create a partition of the the hospital file named "index" which contains 80% 
+## of the original data, randomly selected:
+index <- createDataPartition(project3$Survived_1_year, p=0.80, list=FALSE)
+
+## Divide data selection into two sets: one for training the MLM and one to test 
+## the MLM
+
+##    A. Testing set
+validation <- project3[-index,]
+
+##    B. Training set
+training <- project3[index,]
+
+## Creates a "percentage" variable, which converts data into percentage/ 
+## proportion values:
+percentage <- prop.table(table(training$Survived_1_year)) * 100
+
+## Combine the data by column and display a frequency distribution of the data, 
+## which is then converted to a percentage/proportion distribution by the 
+## previous command:
+cbind(freq=table(training$Survived_1_year), percentage=percentage)
+
+## Print a summary of the cbind of the training dataset:
+summary(training)
+
+## SET PARAMETERS:
+
+## Run algorithms using 10-fold cross validation. place this command in a 
+## variable called "control":
+control <- trainControl(method="cv", number=10)
+
+## Set Metric for evaluation to Accuracy:
+metric <- "Accuracy"
+
+## Set the seed of R's random number generator:
+set.seed(7)
+
+## Perform RF (Random Forest) on the data:
+fit.rf <- train(Survived_1_year~., data=project3, method="rf", metric=metric, trControl=control)
+fit.rf
+
+#run rf model using glm partitions from earlier
+
+train_glm_scaled <- as.data.frame(scale(train_glm))
+test_glm_scaled <- as.data.frame(scale(test_glm))
+
+
+rf = randomForest(Survived_1_year ~ ., data=train_glm_scaled, importance=TRUE)
+varImpPlot(rf)
+yhat.rf = predict(rf, newdata=test_glm_scaled)
+
+#calculate MSE from predicted value for Survived_1_year v actual value
+#mean squared (predicted value - observed value): 50.8% error, much worse than linear regression
+MSE = mean((yhat.rf - test_glm_scaled$Survived_1_year)^2)
+MSE
+
+#plot importance values
+varImp1 <- varImp(fit_model)
+varImp1$labels <- factor(colnames(test_glm_scaled[1:17]))
+varImp1$labels <- reorder(varImp1$labels, varImp1$Overall)
+
+#variable importance plot for all variable model fit
+par(mar=c(6, 12, 1, 1))
+plot(x = varImp1$Overall, y = varImp1$labels, main = "Variable Importance - All Variable Model",
+     yaxt = "n", ylab = "", xlab = "")
+axis(2, at = 1:nrow(varImp1), labels = levels(varImp1$labels), las = 2)
+title(xlab = "Importance")
+
+
+## Run a RF NN analysis on the validation dataset to estimate the skill. 
+## store this data in variable named "predictions":
+predictions <- predict(fit.rf, validation)
+
+## Run a confusion matrix to test the predictions generated by the NN:
+confusionMatrix(predictions, as.factor(validation$Survived_1_year))
+
+
+
+## PART 4. PRINCIPLE COMPONENTS ANALYSIS
+
+
+
+## Convert the Survived_1_year column from  Yes/No to 1/0 
+project3$Survived_1_year <- gsub("Yes", "1", project3$Survived_1_year)
+project3$Survived_1_year <- gsub("No", "0", project3$Survived_1_year)
+
+#All Values
+##were changed to be numeric
+project3$Patient_Rural_Urban <- as.numeric(project3$Patient_Rural_Urban)
+project3$Patient_Smoker <- as.numeric(project3$Patient_Smoker)
+project3$Diagnosed_Condition <- as.numeric(project3$Diagnosed_Condition)
+project3$Survived_1_year <- as.numeric(project3$Survived_1_year)
+project3$Patient_Age <- as.numeric(project3$Patient_Age)
+project3$Treated_DX1 <- as.numeric(project3$Treated_DX1)
+project3$Treated_DX2 <- as.numeric(project3$Treated_DX2)
+project3$Treated_DX3 <- as.numeric(project3$Treated_DX3)
+project3$Treated_DX4 <- as.numeric(project3$Treated_DX4)
+project3$Treated_DX5 <- as.numeric(project3$Treated_DX5)
+project3$Treated_DX6 <- as.numeric(project3$Treated_DX6)
+project3$Patient_Body_Mass_Index <- as.numeric(project3$Patient_Body_Mass_Index)
+project3$A <- as.numeric(project3$A)
+project3$B <- as.numeric(project3$B)
+project3$C <- as.numeric(project3$C)
+project3$D <- as.numeric(project3$D)
+project3$E <- as.numeric(project3$E)
+project3$F <- as.numeric(project3$F)
+project3$Number_of_prev_cond <-as.numeric(project3$Number_of_prev_cond)
+
+
+#removing some of the data so that the model does not get thrown off
+#had to remove everything that wasnt a zero or one
+project3.data <- project3
+
+
+##Checking to ensure that the data has been manipulated properly
+summary(project3.data)
+
+#this runs the PCA and returns it as a PCA object
+BIOT670PCA.pca <- prcomp(project3.data, scale = FALSE)
+
+#displays a summary of the PCA object
+summary(BIOT670PCA.pca)
+
+#Displays the structure of the PCA object
+str(BIOT670PCA.pca)
+
+
+#Visualize significance of each principle component
+fviz_eig(BIOT670PCA.pca)
+
+
+#normalize values (scale=TRUE) so every variable has the same weight on the outcome
+pca <- prcomp((project3.data), scale = TRUE)
+
+pca.var <- pca$sdev^2
+pca.var.per <- round(pca.var/sum(pca.var)*100, 1)
+par(mar=c(11,4,4,4))
+barplot(pca.var.per, main="Scree Plot", 
+        xlab="Principal Component", 
+        ylab="Percent Variation", 
+        names=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19"),
+        las=2)
+
